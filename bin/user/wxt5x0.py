@@ -71,20 +71,24 @@ class WXT5x0ConfigurationEditor(weewx.drivers.AbstractConfEditor):
 
 
 class WXT5x0Driver(weewx.drivers.AbstractDevice):
+    BAUD = {
+        'sdi12': 1200,
+        'nmea0183': 4800,
+    }
+    DEFAULT_PORT = '/dev/ttyUSB0'
+
     def __init__(self, **stn_dict):
         loginf('driver version is %s' % DRIVER_VERSION)
         self._model = stn_dict.get('model', 'WXT520')
         self._num_tries = int(stn_dict.get('num_tries', 5))
         self._retry_wait = int(stn_dict.get('retry_wait', 10))
         self._poll_interval = int(stn_dict.get('poll_interval', 0))
-        protocol = stn_dict.get('protocol', 'serial')
-        baud = 19200
-        if protocol == 'sdi12':
-            baud = 1200
-        elif protocol == 'nmea0183':
-            baud = 4800
+        protocol = stn_dict.get('protocol', 'serial').lower()
+        if protocol not in ['sdi12', 'nmea0183', 'serial']:
+            raise ValueError("unknown protocol '%s'" % protocol)
+        baud = WXT5x0Driver.BAUD.get(protocol, 19200)
         baud = int(stn_dict.get('baud', baud))
-        port = stn_dict.get('port', WXT5x0Station.DEFAULT_PORT)
+        port = stn_dict.get('port', WXT5x0Driver.DEFAULT_PORT)
         if protocol == 'nmea0183':
             self._station = StationNMEA0183(port, baud)
         elif protocol == 'sdi12':
@@ -102,7 +106,7 @@ class WXT5x0Driver(weewx.drivers.AbstractDevice):
                     
     def genLoopPackets(self):
         while True:
-            raw = self._station.get_data(self._num_tries, self._retry_wait)
+            raw = self._station.get_data()
             logdbg("raw: %s" % raw)
             data = Station.parse(raw)
             logdbg("parsed: %s" % data)
@@ -116,8 +120,6 @@ class WXT5x0Driver(weewx.drivers.AbstractDevice):
 
 
 class Station(object):
-    DEFAULT_PORT = '/dev/ttyS0'
-
     def __init__(self, port, baud):
         self.port = port
         self.baudrate = baud
@@ -138,7 +140,7 @@ class Station(object):
 
 
 class StationSerial(Station):
-    def __init__(self, port):
+    def __init__(self, port, baud=19200):
         # baud should be 19200 for RS232, RS485, and RS422
         super(StationSerial, self).__init__(port, baud)
         self.serial_port = None
@@ -155,13 +157,12 @@ class StationSerial(Station):
             self.serial_port.close()
             self.serial_port = None
 
-    def get_data(self, num_tries, retry_wait):
+    def get_data(self):
         return ''
 
 
 class StationNMEA0183(Station):
-    def __init__(self, port):
-        # baud should be 19200 for RS422 or 4800 for RS422
+    def __init__(self, port, baud=4800):
         super(StationNMEA0183, self).__init__(port, baud)
         self.serial_port = None
 
@@ -177,13 +178,13 @@ class StationNMEA0183(Station):
             self.serial_port.close()
             self.serial_port = None
 
-    def get_data(self, num_tries, retry_wait):
+    def get_data(self):
         return ''
 
 
 class StationSDI12(Station):
-    def __init__(self, port):
-        super(StationSDI12, self).__init__(port, 19200)
+    def __init__(self, port, baud=19200):
+        super(StationSDI12, self).__init__(port, baud)
         self.serial_port = None
 
     def open(self):
@@ -198,7 +199,7 @@ class StationSDI12(Station):
             self.serial_port.close()
             self.serial_port = None
 
-    def get_data(self, num_tries, retry_wait):
+    def get_data(self):
         return ''
 
 
@@ -213,13 +214,19 @@ if __name__ == '__main__':
     syslog.openlog('wxt5x0', syslog.LOG_PID | syslog.LOG_CONS)
     syslog.setlogmask(syslog.LOG_UPTO(syslog.LOG_INFO))
     parser = optparse.OptionParser(usage=usage)
-    parser.add_option('--version', dest='version', action='store_true',
+    parser.add_option('--version', action='store_true',
                       help='display driver version')
-    parser.add_option('--debug', dest='debug', action='store_true',
+    parser.add_option('--debug', action='store_true',
                       help='display diagnostic information while running')
-    parser.add_option('--port', dest='port', metavar='PORT',
+    parser.add_option('--protocol', metavar='PROTOCOL',
+                      help='serial, nmea0183, or sdi12',
+                      default='serial')
+    parser.add_option('--port', metavar='PORT',
                       help='serial port to which the station is connected',
-                      default=DEFAULT_PORT)
+                      default=WXT5x0Driver.DEFAULT_PORT)
+    parser.add_option('--poll-interval', metavar='POLL', type=int,
+                      help='poll interval, in seconds',
+                      default=3)
     (options, args) = parser.parse_args()
 
     if options.version:
@@ -229,7 +236,13 @@ if __name__ == '__main__':
     if options.debug:
         syslog.setlogmask(syslog.LOG_UPTO(syslog.LOG_DEBUG))
 
-    with Station(options.port) as s:
-        s.set_logger_mode()
-        while True:
-            print time.time(), s.get_readings()
+    if options.protocol == 'serial':
+        s = StationSerial(options.port)
+    elif options.protocol == 'nmea0183':
+        s = StationNMEA0183(options.port)
+    elif options.protocol == 'sdi12':
+        s = StationSDI12(options.port)
+
+    while True:
+        print int(time.time()), s.get_data()
+        time.sleep(options.poll_interval)
