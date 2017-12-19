@@ -10,6 +10,9 @@ The WXT520 is available with the following serial communications:
  - RS485: ASCII automatic and polled; NMEA0183 v3; SDI12 v1.3
  - RS422: ASCII automatic and polled; NMEA0183 v3; SDI12 v1.3
  - SDI12: v1.3 and v1.3 continuous
+
+If polling interval is 0, the driver will put the device into automatic mode.
+Otherwise, the driver will poll the device at the specified polling interval.
 """
 
 from __future__ import with_statement
@@ -43,6 +46,7 @@ def logerr(msg):
 
 class Station(object):
     def __init__(self, address, port, baud):
+        self.terminator = '!'
         self.address = address
         self.port = port
         self.baudrate = baud
@@ -61,6 +65,17 @@ class Station(object):
     def __exit__(self, _, value, traceback):
         self.close()
 
+    @staticmethod
+    def parse(data):
+        # 0R0,Dn=000#,Dm=106#,Dx=182#,Sn=1.1#,Sm=4.0#,Sx=6.6#,Ta=16.0C,Ua=50.0P,Pa=1018.1H,Rc=0.00M,Rd=0s,Ri=0.0M,Hc=0.0M,Hd=0s,Hi=0.0M,Rp=0.0M,Hp=0.0M,Th=15.6C,Vh=0.0N,Vs=15.2V,Vr=3.498V,Id=Ant
+        parts = data.strip().split(',')
+        parsed = dict()
+        for part in parts:
+            if '=' in part:
+                name, value = part.split('=')
+                parsed[name] = value
+        return parsed
+        
 
 class StationSerial(Station):
     DEFAULT_BAUD = 19200
@@ -82,6 +97,9 @@ class StationSerial(Station):
             self.serial_port.close()
             self.serial_port = None
 
+    def set_automatic_mode(self):
+        pass
+            
     def get_wind(self):
         return ''
 
@@ -94,8 +112,13 @@ class StationSerial(Station):
     def get_supervisor(self):
         return ''
 
-    def get_data(self):
-        self.serial_port.write('%dR0' % self.address)
+    def get_composite(self):
+        return self.get_data('R0')
+        
+    def get_data(self, cmd):
+        cmd = "%d%s%s" % (self.address, cmd, self.terminator)
+        self.serial_port.write(cmd)
+        return self.serial_port.readline()
 
 
 class StationNMEA0183(Station):
@@ -104,21 +127,7 @@ class StationNMEA0183(Station):
     def __init__(self, address, port, baud=DEFAULT_BAUD):
         super(StationNMEA0183, self).__init__(address, port, baud)
         self.serial_port = None
-
-    def open(self):
-        import serial
-        logdbg("open serial port %s" % self.port)
-        self.serial_port = serial.Serial(
-            self.port, self.baudrate, timeout=self.timeout)
-
-    def close(self):
-        if self.serial_port is not None:
-            logdbg("close serial port %s" % self.port)
-            self.serial_port.close()
-            self.serial_port = None
-
-    def get_data(self):
-        return ''
+        raise NotImplementedError("NMEA support not implemented")
 
 
 class StationSDI12(Station):
@@ -127,21 +136,7 @@ class StationSDI12(Station):
     def __init__(self, address, port, baud=DEFAULT_BAUD):
         super(StationSDI12, self).__init__(address, port, baud)
         self.serial_port = None
-
-    def open(self):
-        import serial
-        logdbg("open serial port %s" % self.port)
-        self.serial_port = serial.Serial(
-            self.port, self.baudrate, timeout=self.timeout)
-
-    def close(self):
-        if self.serial_port is not None:
-            logdbg("close serial port %s" % self.port)
-            self.serial_port.close()
-            self.serial_port = None
-
-    def get_data(self):
-        return ''
+        raise NotImplementedError("SDI12 support not implemented")
 
 
 class WXT5x0ConfigurationEditor(weewx.drivers.AbstractConfEditor):
@@ -205,7 +200,7 @@ class WXT5x0Driver(weewx.drivers.AbstractDevice):
         port = stn_dict.get('port', WXT5x0Driver.DEFAULT_PORT)
         self._station = WXT5x0Driver.STATION.get(protocol)(address, port, baud)
         self._station.open()
-                
+
     def closePort(self):
         self._station.shutdown()
 
@@ -273,6 +268,10 @@ if __name__ == '__main__':
         print "unknown protocol '%s'" % options.protocol
         exit(1)
 
+    s.open()
     while True:
-        print int(time.time()), s.get_data()
+        data = s.get_composite().strip()
+        print int(time.time()), data
+        parsed = Station.parse(data)
+        print parsed
         time.sleep(options.poll_interval)
