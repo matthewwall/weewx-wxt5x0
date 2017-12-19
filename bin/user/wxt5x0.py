@@ -41,6 +41,109 @@ def logerr(msg):
     logmsg(syslog.LOG_ERR, msg)
 
 
+class Station(object):
+    def __init__(self, address, port, baud):
+        self.address = address
+        self.port = port
+        self.baudrate = baud
+        self.timeout = 3 # seconds
+
+    def open(self):
+        pass
+
+    def shutdown(self):
+        pass
+
+    def __enter__(self):
+        self.open()
+        return self
+
+    def __exit__(self, _, value, traceback):
+        self.close()
+
+
+class StationSerial(Station):
+    DEFAULT_BAUD = 19200
+
+    def __init__(self, address, port, baud=DEFAULT_BAUD):
+        # baud should be 19200 for RS232, RS485, and RS422
+        super(StationSerial, self).__init__(address, port, baud)
+        self.serial_port = None
+
+    def open(self):
+        import serial
+        logdbg("open serial port %s" % self.port)
+        self.serial_port = serial.Serial(
+            self.port, self.baudrate, timeout=self.timeout)
+
+    def close(self):
+        if self.serial_port is not None:
+            logdbg("close serial port %s" % self.port)
+            self.serial_port.close()
+            self.serial_port = None
+
+    def get_wind(self):
+        return ''
+
+    def get_pth(self):
+        return ''
+
+    def get_precip(self):
+        return ''
+
+    def get_supervisor(self):
+        return ''
+
+    def get_data(self):
+        self.serial_port.write('%dR0' % self.address)
+
+
+class StationNMEA0183(Station):
+    DEFAULT_BAUD = 4800
+
+    def __init__(self, address, port, baud=DEFAULT_BAUD):
+        super(StationNMEA0183, self).__init__(address, port, baud)
+        self.serial_port = None
+
+    def open(self):
+        import serial
+        logdbg("open serial port %s" % self.port)
+        self.serial_port = serial.Serial(
+            self.port, self.baudrate, timeout=self.timeout)
+
+    def close(self):
+        if self.serial_port is not None:
+            logdbg("close serial port %s" % self.port)
+            self.serial_port.close()
+            self.serial_port = None
+
+    def get_data(self):
+        return ''
+
+
+class StationSDI12(Station):
+    DEFAULT_BAUD = 1200
+
+    def __init__(self, address, port, baud=DEFAULT_BAUD):
+        super(StationSDI12, self).__init__(address, port, baud)
+        self.serial_port = None
+
+    def open(self):
+        import serial
+        logdbg("open serial port %s" % self.port)
+        self.serial_port = serial.Serial(
+            self.port, self.baudrate, timeout=self.timeout)
+
+    def close(self):
+        if self.serial_port is not None:
+            logdbg("close serial port %s" % self.port)
+            self.serial_port.close()
+            self.serial_port = None
+
+    def get_data(self):
+        return ''
+
+
 class WXT5x0ConfigurationEditor(weewx.drivers.AbstractConfEditor):
     @property
     def default_stanza(self):
@@ -51,29 +154,39 @@ class WXT5x0ConfigurationEditor(weewx.drivers.AbstractConfEditor):
     # The station model such as WXT510 or WXT520
     model = WXT520
 
+    # The communication protocol to use, one of serial, nmea0183, or sdi12
+    protocol = serial
+
     # The serial port to which the station is connected
     port = /dev/ttyUSB0
 
-    # The communication protocol to use, one of serial, nmea0183, or sdi12
-    protocol = serial
+    # The device address
+    address = 0
 
     # The driver to use
     driver = weewx.drivers.wxt5x0
 """
 
     def prompt_for_settings(self):
+        print "Specify the protocol"
+        protocol = self._prompt('protocol', 'serial', ['serial', 'nmea0183', 'sdi12'])
         print "Specify the serial port on which the station is connected, for"
         print "example /dev/ttyUSB0 or /dev/ttyS0."
         port = self._prompt('port', '/dev/ttyUSB0')
-        print "Specify the protocol"
-        protocol = self._prompt('protocol', 'serial', ['serial', 'nmea0183', 'sdi12'])
-        return {'port': port, 'protocol': protocol}
+        print "Specify the device address"
+        address = self._prompt('address', 0)
+        return {'protocol': protocol, 'port': port, 'address': address}
 
 
 class WXT5x0Driver(weewx.drivers.AbstractDevice):
+    STATION = {
+        'sdi12': StationSDI12,
+        'nmea0183': StationNMEA0183,
+        'serial': StationSerial,
+    }
     BAUD = {
-        'sdi12': 1200,
-        'nmea0183': 4800,
+        'sdi12': StationSDI12.DEFAULT_BAUD,
+        'nmea0183': StationNMEA0183.DEFAULT_BAUD,
     }
     DEFAULT_PORT = '/dev/ttyUSB0'
 
@@ -83,18 +196,14 @@ class WXT5x0Driver(weewx.drivers.AbstractDevice):
         self._num_tries = int(stn_dict.get('num_tries', 5))
         self._retry_wait = int(stn_dict.get('retry_wait', 10))
         self._poll_interval = int(stn_dict.get('poll_interval', 0))
+        self._address = int(stn_dict.get('address', 0))
         protocol = stn_dict.get('protocol', 'serial').lower()
         if protocol not in ['sdi12', 'nmea0183', 'serial']:
             raise ValueError("unknown protocol '%s'" % protocol)
         baud = WXT5x0Driver.BAUD.get(protocol, 19200)
         baud = int(stn_dict.get('baud', baud))
         port = stn_dict.get('port', WXT5x0Driver.DEFAULT_PORT)
-        if protocol == 'nmea0183':
-            self._station = StationNMEA0183(port, baud)
-        elif protocol == 'sdi12':
-            self._station = StationSDI12(port, baud)
-        else:
-            self._station = StationSerial(port, baud)
+        self._station = WXT5x0Driver.STATION.get(protocol)(address, port, baud)
         self._station.open()
                 
     def closePort(self):
@@ -119,90 +228,6 @@ class WXT5x0Driver(weewx.drivers.AbstractDevice):
         return dict()
 
 
-class Station(object):
-    def __init__(self, port, baud):
-        self.port = port
-        self.baudrate = baud
-        self.timeout = 3 # seconds
-
-    def open(self):
-        pass
-
-    def shutdown(self):
-        pass
-
-    def __enter__(self):
-        self.open()
-        return self
-
-    def __exit__(self, _, value, traceback):
-        self.close()
-
-
-class StationSerial(Station):
-    def __init__(self, port, baud=19200):
-        # baud should be 19200 for RS232, RS485, and RS422
-        super(StationSerial, self).__init__(port, baud)
-        self.serial_port = None
-
-    def open(self):
-        import serial
-        logdbg("open serial port %s" % self.port)
-        self.serial_port = serial.Serial(
-            self.port, self.baudrate, timeout=self.timeout)
-
-    def close(self):
-        if self.serial_port is not None:
-            logdbg("close serial port %s" % self.port)
-            self.serial_port.close()
-            self.serial_port = None
-
-    def get_data(self):
-        return ''
-
-
-class StationNMEA0183(Station):
-    def __init__(self, port, baud=4800):
-        super(StationNMEA0183, self).__init__(port, baud)
-        self.serial_port = None
-
-    def open(self):
-        import serial
-        logdbg("open serial port %s" % self.port)
-        self.serial_port = serial.Serial(
-            self.port, self.baudrate, timeout=self.timeout)
-
-    def close(self):
-        if self.serial_port is not None:
-            logdbg("close serial port %s" % self.port)
-            self.serial_port.close()
-            self.serial_port = None
-
-    def get_data(self):
-        return ''
-
-
-class StationSDI12(Station):
-    def __init__(self, port, baud=19200):
-        super(StationSDI12, self).__init__(port, baud)
-        self.serial_port = None
-
-    def open(self):
-        import serial
-        logdbg("open serial port %s" % self.port)
-        self.serial_port = serial.Serial(
-            self.port, self.baudrate, timeout=self.timeout)
-
-    def close(self):
-        if self.serial_port is not None:
-            logdbg("close serial port %s" % self.port)
-            self.serial_port.close()
-            self.serial_port = None
-
-    def get_data(self):
-        return ''
-
-
 # define a main entry point for basic testing of the station without weewx
 # engine and service overhead.  invoke this as follows from the weewx root dir:
 #
@@ -219,14 +244,16 @@ if __name__ == '__main__':
     parser.add_option('--debug', action='store_true',
                       help='display diagnostic information while running')
     parser.add_option('--protocol', metavar='PROTOCOL',
-                      help='serial, nmea0183, or sdi12',
-                      default='serial')
+                      help='serial, nmea0183, or sdi12', default='serial')
     parser.add_option('--port', metavar='PORT',
                       help='serial port to which the station is connected',
                       default=WXT5x0Driver.DEFAULT_PORT)
+    parser.add_option('--baud', type=int,
+                      help='baud rate', default=19200)
+    parser.add_option('--address', type=int,
+                      help='device address', default=0)
     parser.add_option('--poll-interval', metavar='POLL', type=int,
-                      help='poll interval, in seconds',
-                      default=3)
+                      help='poll interval, in seconds', default=3)
     (options, args) = parser.parse_args()
 
     if options.version:
@@ -237,11 +264,14 @@ if __name__ == '__main__':
         syslog.setlogmask(syslog.LOG_UPTO(syslog.LOG_DEBUG))
 
     if options.protocol == 'serial':
-        s = StationSerial(options.port)
+        s = StationSerial(options.address, options.port, options.baud)
     elif options.protocol == 'nmea0183':
-        s = StationNMEA0183(options.port)
+        s = StationNMEA0183(options.address, options.port, options.baud)
     elif options.protocol == 'sdi12':
-        s = StationSDI12(options.port)
+        s = StationSDI12(options.address, options.port, options.baud)
+    else:
+        print "unknown protocol '%s'" % options.protocol
+        exit(1)
 
     while True:
         print int(time.time()), s.get_data()
