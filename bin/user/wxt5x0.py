@@ -46,7 +46,7 @@ def logerr(msg):
 
 class Station(object):
     def __init__(self, address, port, baud):
-        self.terminator = '!'
+        self.terminator = ''
         self.address = address
         self.port = port
         self.baudrate = baud
@@ -83,6 +83,7 @@ class StationSerial(Station):
     def __init__(self, address, port, baud=DEFAULT_BAUD):
         # baud should be 19200 for RS232, RS485, and RS422
         super(StationSerial, self).__init__(address, port, baud)
+        self.terminator = '\r\n'
         self.serial_port = None
 
     def open(self):
@@ -126,6 +127,7 @@ class StationNMEA0183(Station):
 
     def __init__(self, address, port, baud=DEFAULT_BAUD):
         super(StationNMEA0183, self).__init__(address, port, baud)
+        self.terminator = '\r\n'
         self.serial_port = None
         raise NotImplementedError("NMEA support not implemented")
 
@@ -135,6 +137,7 @@ class StationSDI12(Station):
 
     def __init__(self, address, port, baud=DEFAULT_BAUD):
         super(StationSDI12, self).__init__(address, port, baud)
+        self.terminator = '!'
         self.serial_port = None
         raise NotImplementedError("SDI12 support not implemented")
 
