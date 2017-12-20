@@ -11,8 +11,30 @@ The WXT520 is available with the following serial communications:
  - RS422: ASCII automatic and polled; NMEA0183 v3; SDI12 v1.3
  - SDI12: v1.3 and v1.3 continuous
 
-If polling interval is 0, the driver will put the device into automatic mode.
-Otherwise, the driver will poll the device at the specified polling interval.
+This driver supports only ASCII communications protocol.
+
+The precipitation sensor measures both rain and hail.
+
+The precipitation sensor has three modes: precipitation on/off, tipping bucket,
+and time based.  In precipitation on/off, the transmitter ends a precipitation
+message 10 seconds after the first recognition of precipitation.  Rain duration
+increases in 10 second steps.  Precipitation has ended when Ri=0.  This mode is
+used for indication of the start and the end of precipitation.
+
+In tipping bucket, the transmitter sends a precipitation message at each unit
+increment (0.1mm/0.01 in).  This simulates conventional tipping bucket method.
+
+In time based mode, the transmitter sends a precipitation message in the
+intervals defined in the [I] field.  However, in polled protocols the autosend
+mode tipping bucket should not be used as in it the resolution of the output
+is decreased (quantized to tipping bucket tips).
+
+The precipitation sensor can also operate in polled mode - it sends a precip
+message when requested.
+
+The rain counter reset can be manual, automatic, immediate, or limited.
+
+The supervisor message controls error messaging and heater.
 """
 
 from __future__ import with_statement
@@ -45,7 +67,8 @@ def logerr(msg):
 
 
 class Station(object):
-    def __init__(self, address, port, baud):
+    def __init__(self, address, port, baud, use_crc=False):
+        self.use_crc = use_crc
         self.terminator = ''
         self.address = address
         self.port = port
@@ -65,23 +88,107 @@ class Station(object):
     def __exit__(self, _, value, traceback):
         self.close()
 
+    # wind
+    # [I] update interval 1...3600 seconds
+    # [A] averaging time 1...3600 seconds
+    # [U] speed M=m/s K=km/h S=mph N=knots
+    # [D] direction offset -180...180
+
+    # temperature/humidity
+    # [I] update interval 1...3600 seconds
+    # [P] pressure H=hPa P=pascal B=bar M=mmHg I=inHg
+    # [T] temperature C=celsius F=fahrenheit
+
+    # precipitation
+    # [I] update interval 1...3600 seconds
+    # [U] precip M=(mm s mm/h) I=(in s in/h)
+    # [S] hail M=(hits/cm^2 s hits/cm^2h) I=(hits/in^2 s hits/in^2h) H=hits
+
+    # '#' indicates invalid data
+
+    SPEED_UNITS = {
+        'D': 'degree',
+        'M': 'meter_per_second',
+        'K': 'km_per_hour',
+        'S': 'mile_per_hour',
+        'N': 'knot',
+        }
+
+    PRESSURE_UNITS = {
+        'H': 'hPa',
+        'P': 'pa', # FIXME
+        'B': 'bar', # FIXME
+        'M': 'mmHg',
+        'I': 'inHg',
+        }
+
+    TEMPERATURE_UNITS = {
+        'C': 'degree_C',
+        'F': 'degree_F',
+        }
+
+    HUMIDITY_UNITS = {
+        'P': 'percent',
+        }
+
+    OBSERVATIONS = {
+        # aR1: wind message
+        'Dn': 'wind_dir',
+        'Dm': 'wind_dir_avg',
+        'Dx': 'wind_dir_max',
+        'Sn': 'wind_speed_min',
+        'Sm': 'wind_speed_avg',
+        'Sx': 'wind_speed_max',
+        # aR2: pressure, temperature, humidity message
+        'Ta': 'temperature',
+        'Ua': 'humidity',
+        'Pa': 'pressure',
+        # aR3: precipitation message
+        'Rc': 'rain',
+        'Rd': 'rain_duration',
+        'Ri': 'rain_intensity',
+        'Hc': 'hail',
+        'Hd': 'hail_duration',
+        'Hi': 'hail_intensity',
+        'Rp': 'rain_intensity_peak',
+        'Hp': 'hail_intensity_peak',
+        # dR5: supervisor message
+        'Th': 'heating_temperature',
+        'Vh': 'heating_voltage',
+        'Vs': 'supply_voltage',
+        'Vr': 'reference_voltage',
+        'Id': 'information',
+        }
+
     @staticmethod
-    def parse(data):
+    def parse(raw):
         # 0R0,Dn=000#,Dm=106#,Dx=182#,Sn=1.1#,Sm=4.0#,Sx=6.6#,Ta=16.0C,Ua=50.0P,Pa=1018.1H,Rc=0.00M,Rd=0s,Ri=0.0M,Hc=0.0M,Hd=0s,Hi=0.0M,Rp=0.0M,Hp=0.0M,Th=15.6C,Vh=0.0N,Vs=15.2V,Vr=3.498V,Id=Ant
-        parts = data.strip().split(',')
         parsed = dict()
-        for part in parts:
+        for part in raw.strip().split(','):
             if '=' in part:
-                name, value = part.split('=')
-                parsed[name] = value
+                abbr, vstr = part.split('=')
+                if abbr == 'Id': # skip the information field
+                    continue
+                obs = OBSERVATIONS.get(abbr)
+                if obs:
+                    value = None
+                    try:
+                        unit = vstr[-1]
+                        if unit != '#':
+                            value = float(vstr[:-1])
+                    except ValueError, e:
+                        logerr("parse failed for %s (%s):%s" % (abbr, vstr, e))
+                    parsed[obs] = value
+                else:
+                    logdbg("unknown sensor %s: %s" % (abbr, vstr))
         return parsed
         
 
 class StationSerial(Station):
+    # ASCII over RS232, RS485, and RS422 defaults to 19200, 8, N, 1
     DEFAULT_BAUD = 19200
 
     def __init__(self, address, port, baud=DEFAULT_BAUD):
-        # baud should be 19200 for RS232, RS485, and RS422
         super(StationSerial, self).__init__(address, port, baud)
         self.terminator = '\r\n'
         self.serial_port = None
@@ -123,6 +230,7 @@ class StationSerial(Station):
 
 
 class StationNMEA0183(Station):
+    # RS422 NMEA defaults to 4800, 8, N, 1
     DEFAULT_BAUD = 4800
 
     def __init__(self, address, port, baud=DEFAULT_BAUD):
@@ -133,6 +241,7 @@ class StationNMEA0183(Station):
 
 
 class StationSDI12(Station):
+    # SDI12 defaults to 1200, 7, E, 1
     DEFAULT_BAUD = 1200
 
     def __init__(self, address, port, baud=DEFAULT_BAUD):
@@ -155,7 +264,7 @@ class WXT5x0ConfigurationEditor(weewx.drivers.AbstractConfEditor):
     # The communication protocol to use, one of serial, nmea0183, or sdi12
     protocol = serial
 
-    # The serial port to which the station is connected
+    # The port to which the station is connected
     port = /dev/ttyUSB0
 
     # The device address
@@ -188,12 +297,40 @@ class WXT5x0Driver(weewx.drivers.AbstractDevice):
     }
     DEFAULT_PORT = '/dev/ttyUSB0'
 
+    # map sensor names to schema names
+    DEFAULT_MAP = {
+        'windDir': 'wind_dir',
+        'windSpeed': 'wind_speed_avg',
+        'windGustDir': 'wind_dir_max',
+        'windGust': 'wind_speed_max',
+        'outTemp': 'temperature',
+        'outHumidity': 'humidity',
+        'pressure': 'pressure',
+        'rain_total': 'rain',
+        'rainRate': 'rain_intensity',
+        'hail_total': 'hail',
+        'hailRate': 'hail_intensity',
+        'heatingTemp': 'heating_temperature',
+        'heatingVoltage': 'heating_voltage',
+        'supplyVoltage': 'supply_voltage',
+        'referenceVoltage': 'reference_voltage',
+        }
+
+        'Dm': 'wind_dir_avg',
+        'Sn': 'wind_speed_min',
+        # aR3: precipitation message
+        'Rd': 'rain_duration',
+        'Hd': 'hail_duration',
+        'Rp': 'rain_intensity_peak',
+        'Hp': 'hail_intensity_peak',
+
     def __init__(self, **stn_dict):
         loginf('driver version is %s' % DRIVER_VERSION)
         self._model = stn_dict.get('model', 'WXT520')
-        self._num_tries = int(stn_dict.get('num_tries', 5))
+        self._max_tries = int(stn_dict.get('max_tries', 5))
         self._retry_wait = int(stn_dict.get('retry_wait', 10))
         self._poll_interval = int(stn_dict.get('poll_interval', 0))
+        self._sensor_map = dict(WXT5x0Driver.DEFAULT_MAP)
         self._address = int(stn_dict.get('address', 0))
         protocol = stn_dict.get('protocol', 'serial').lower()
         if protocol not in ['sdi12', 'nmea0183', 'serial']:
@@ -213,17 +350,40 @@ class WXT5x0Driver(weewx.drivers.AbstractDevice):
                     
     def genLoopPackets(self):
         while True:
-            raw = self._station.get_data()
-            logdbg("raw: %s" % raw)
-            data = Station.parse(raw)
-            logdbg("parsed: %s" % data)
-            packet = self._data_to_packet(data)
-            yield packet
+            for cnt in range(self._max_tries):
+                try:
+                    raw = self._station.get_composite()
+                    logdbg("raw: %s" % raw)
+                    data = Station.parse(raw)
+                    logdbg("parsed: %s" % data)
+                    packet = self._data_to_packet(data)
+                    yield packet
+                    break
+                except (BadRead, BadHeader, usb.USBError), e:
+                    logerr("Failed attempt %d of %d to read data: %s" %
+                           (cnt + 1, self.max_tries, e))
+                    logdbg("Waiting %d seconds" % self._retry_wait)
+                    time.sleep(self._retry_wait)
+            else:
+                raise weewx.RetriesExceeded("Read failed after %d tries" %
+                                            self._max_tries)
             if self._poll_interval:
                 time.sleep(self._poll_interval)
 
     def _data_to_packet(self, data):
-        return dict()
+        # if there is a mapping to a schema name, use it.  otherwise use the
+        # sensor naming native to the hardware.
+        fields = self.sensor_map.values()
+        packet = dict()
+        for name in data:
+            obs = name
+            if name in fields:
+                for field in self.sensor_map:
+                    if self.sensor_map[field] == name:
+                        obs = field
+                        break
+            packet[obs] = data[name]
+        return packet
 
 
 # define a main entry point for basic testing of the station without weewx
