@@ -37,6 +37,10 @@ The rain counter reset can be manual, automatic, immediate, or limited.
 The supervisor message controls error messaging and heater.
 """
 
+# FIXME: test with and without error messages
+# FIXME: test with and without crc
+# FIXME: get units right
+
 from __future__ import with_statement
 import syslog
 import time
@@ -74,6 +78,7 @@ class Station(object):
         self.port = port
         self.baudrate = baud
         self.timeout = 3 # seconds
+        self.device = None
 
     def open(self):
         pass
@@ -87,6 +92,60 @@ class Station(object):
 
     def __exit__(self, _, value, traceback):
         self.close()
+
+    def send_cmd(self, cmd):
+        cmd = "%d%s%s" % (self.address, cmd, self.terminator)
+        self.device.write(cmd)
+
+    def get_data(self, cmd):
+#        if self.use_crc:
+#            cmd = cmd.replace('R', 'r')
+#            cmd = "%sxxx" % cmd
+        self.send_cmd(cmd)
+        return self.device.readline()
+
+    def get_address(self):
+        self.device.write('?%s' % self.terminator)
+        return self.device.readline()
+
+    def set_address(self, addr):
+        self.send_cmd('A%d' % addr)
+
+    def get_ack(self):
+        return self.get_data('')
+
+    def reset(self):
+        self.send_cmd('XZ')
+
+    def precip_counter_reset(self):
+        self.send_cmd('XZRU')
+
+    def precip_intensity_reset(self):
+        self.send_cmd('XZRI')
+
+    def measurement_reset(self):
+        self.send_cmd('XZM')
+
+    def set_automatic_mode(self):
+        self.send_cmd('XU,M=R')
+
+    def set_polled_mode(self):
+        self.send_cmd('XU,M=P')
+
+    def get_wind(self):
+        return self.get_data('R1')
+
+    def get_pth(self):
+        return self.get_data('R2')
+
+    def get_precip(self):
+        return self.get_data('R3')
+
+    def get_supervisor(self):
+        return self.get_data('R5')
+
+    def get_composite(self):
+        return self.get_data('R0')
 
     # wind
     # [I] update interval 1...3600 seconds
@@ -191,42 +250,19 @@ class StationSerial(Station):
     def __init__(self, address, port, baud=DEFAULT_BAUD):
         super(StationSerial, self).__init__(address, port, baud)
         self.terminator = '\r\n'
-        self.serial_port = None
+        self.device = None
 
     def open(self):
         import serial
         logdbg("open serial port %s" % self.port)
-        self.serial_port = serial.Serial(
+        self.device = serial.Serial(
             self.port, self.baudrate, timeout=self.timeout)
 
     def close(self):
-        if self.serial_port is not None:
+        if self.device is not None:
             logdbg("close serial port %s" % self.port)
-            self.serial_port.close()
-            self.serial_port = None
-
-    def set_automatic_mode(self):
-        pass
-            
-    def get_wind(self):
-        return self.get_data('')
-
-    def get_pth(self):
-        return self.get_data('')
-
-    def get_precip(self):
-        return self.get_data('')
-
-    def get_supervisor(self):
-        return self.get_data('')
-
-    def get_composite(self):
-        return self.get_data('R0')
-        
-    def get_data(self, cmd):
-        cmd = "%d%s%s" % (self.address, cmd, self.terminator)
-        self.serial_port.write(cmd)
-        return self.serial_port.readline()
+            self.device.close()
+            self.device = None
 
 
 class StationNMEA(Station):
@@ -236,7 +272,6 @@ class StationNMEA(Station):
     def __init__(self, address, port, baud=DEFAULT_BAUD):
         super(StationNMEA, self).__init__(address, port, baud)
         self.terminator = '\r\n'
-        self.serial_port = None
         raise NotImplementedError("NMEA support not implemented")
 
 
@@ -247,7 +282,6 @@ class StationSDI12(Station):
     def __init__(self, address, port, baud=DEFAULT_BAUD):
         super(StationSDI12, self).__init__(address, port, baud)
         self.terminator = '!'
-        self.serial_port = None
         raise NotImplementedError("SDI12 support not implemented")
 
 
@@ -291,10 +325,6 @@ class WXT5x0Driver(weewx.drivers.AbstractDevice):
         'nmea': StationNMEA,
         'serial': StationSerial,
     }
-    BAUD = {
-        'sdi12': StationSDI12.DEFAULT_BAUD,
-        'nmea': StationNMEA.DEFAULT_BAUD,
-    }
     DEFAULT_PORT = '/dev/ttyUSB0'
 
     # map sensor names to schema names
@@ -327,7 +357,7 @@ class WXT5x0Driver(weewx.drivers.AbstractDevice):
         protocol = stn_dict.get('protocol', 'serial').lower()
         if protocol not in WXT5x0Driver.STATION:
             raise ValueError("unknown protocol '%s'" % protocol)
-        baud = WXT5x0Driver.BAUD.get(protocol, 19200)
+        baud = WXT5x0Driver.STATION[protocol].DEFAULT_BAUD
         baud = int(stn_dict.get('baud', baud))
         port = stn_dict.get('port', WXT5x0Driver.DEFAULT_PORT)
         self._station = WXT5x0Driver.STATION.get(protocol)(address, port, baud)
@@ -366,7 +396,7 @@ class WXT5x0Driver(weewx.drivers.AbstractDevice):
         # if there is a mapping to a schema name, use it.  otherwise use the
         # sensor naming native to the hardware.
         fields = self.sensor_map.values()
-        packet = dict()
+        packet = {'dateTime': int(time.time() + 0.5), 'usUnits': weewx.METRIC}
         for name in data:
             obs = name
             if name in fields:
