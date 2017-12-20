@@ -3,6 +3,8 @@
 """
 Collect data from Vaisala WXT510 or WXT520 station.
 
+Thanks to Antonis Katsonis for providing a Vaisala WXT520 for development.
+
 http://www.vaisala.com/Vaisala%20Documents/User%20Guides%20and%20Quick%20Ref%20Guides/M210906EN-C.pdf
 
 The WXT520 is available with the following serial communications:
@@ -162,7 +164,6 @@ class Station(object):
         b = 0x40 | ((crc >> 6) & 0x3f)
         c = 0x40 | (crc & 0x3f)
         return a + b + c
-
 
     # wind
     # [I] update interval 1...3600 seconds
