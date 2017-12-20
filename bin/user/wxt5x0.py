@@ -229,12 +229,12 @@ class StationSerial(Station):
         return self.serial_port.readline()
 
 
-class StationNMEA0183(Station):
+class StationNMEA(Station):
     # RS422 NMEA defaults to 4800, 8, N, 1
     DEFAULT_BAUD = 4800
 
     def __init__(self, address, port, baud=DEFAULT_BAUD):
-        super(StationNMEA0183, self).__init__(address, port, baud)
+        super(StationNMEA, self).__init__(address, port, baud)
         self.terminator = '\r\n'
         self.serial_port = None
         raise NotImplementedError("NMEA support not implemented")
@@ -261,7 +261,7 @@ class WXT5x0ConfigurationEditor(weewx.drivers.AbstractConfEditor):
     # The station model such as WXT510 or WXT520
     model = WXT520
 
-    # The communication protocol to use, one of serial, nmea0183, or sdi12
+    # The communication protocol to use, one of serial, nmea, or sdi12
     protocol = serial
 
     # The port to which the station is connected
@@ -276,7 +276,7 @@ class WXT5x0ConfigurationEditor(weewx.drivers.AbstractConfEditor):
 
     def prompt_for_settings(self):
         print "Specify the protocol"
-        protocol = self._prompt('protocol', 'serial', ['serial', 'nmea0183', 'sdi12'])
+        protocol = self._prompt('protocol', 'serial', ['serial', 'nmea', 'sdi12'])
         print "Specify the serial port on which the station is connected, for"
         print "example /dev/ttyUSB0 or /dev/ttyS0."
         port = self._prompt('port', '/dev/ttyUSB0')
@@ -288,12 +288,12 @@ class WXT5x0ConfigurationEditor(weewx.drivers.AbstractConfEditor):
 class WXT5x0Driver(weewx.drivers.AbstractDevice):
     STATION = {
         'sdi12': StationSDI12,
-        'nmea0183': StationNMEA0183,
+        'nmea': StationNMEA,
         'serial': StationSerial,
     }
     BAUD = {
         'sdi12': StationSDI12.DEFAULT_BAUD,
-        'nmea0183': StationNMEA0183.DEFAULT_BAUD,
+        'nmea': StationNMEA.DEFAULT_BAUD,
     }
     DEFAULT_PORT = '/dev/ttyUSB0'
 
@@ -333,7 +333,7 @@ class WXT5x0Driver(weewx.drivers.AbstractDevice):
         self._sensor_map = dict(WXT5x0Driver.DEFAULT_MAP)
         self._address = int(stn_dict.get('address', 0))
         protocol = stn_dict.get('protocol', 'serial').lower()
-        if protocol not in ['sdi12', 'nmea0183', 'serial']:
+        if protocol not in ['sdi12', 'nmea', 'serial']:
             raise ValueError("unknown protocol '%s'" % protocol)
         baud = WXT5x0Driver.BAUD.get(protocol, 19200)
         baud = int(stn_dict.get('baud', baud))
@@ -402,7 +402,7 @@ if __name__ == '__main__':
     parser.add_option('--debug', action='store_true',
                       help='display diagnostic information while running')
     parser.add_option('--protocol', metavar='PROTOCOL',
-                      help='serial, nmea0183, or sdi12', default='serial')
+                      help='serial, nmea, or sdi12', default='serial')
     parser.add_option('--port', metavar='PORT',
                       help='serial port to which the station is connected',
                       default=WXT5x0Driver.DEFAULT_PORT)
@@ -423,8 +423,8 @@ if __name__ == '__main__':
 
     if options.protocol == 'serial':
         s = StationSerial(options.address, options.port, options.baud)
-    elif options.protocol == 'nmea0183':
-        s = StationNMEA0183(options.address, options.port, options.baud)
+    elif options.protocol == 'nmea':
+        s = StationNMEA(options.address, options.port, options.baud)
     elif options.protocol == 'sdi12':
         s = StationSDI12(options.address, options.port, options.baud)
     else:
