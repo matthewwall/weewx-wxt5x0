@@ -133,7 +133,7 @@ class Station(object):
 
     OBSERVATIONS = {
         # aR1: wind message
-        'Dn': 'wind_dir',
+        'Dn': 'wind_dir_min',
         'Dm': 'wind_dir_avg',
         'Dx': 'wind_dir_max',
         'Sn': 'wind_speed_min',
@@ -209,16 +209,16 @@ class StationSerial(Station):
         pass
             
     def get_wind(self):
-        return ''
+        return self.get_data('')
 
     def get_pth(self):
-        return ''
+        return self.get_data('')
 
     def get_precip(self):
-        return ''
+        return self.get_data('')
 
     def get_supervisor(self):
-        return ''
+        return self.get_data('')
 
     def get_composite(self):
         return self.get_data('R0')
@@ -271,7 +271,7 @@ class WXT5x0ConfigurationEditor(weewx.drivers.AbstractConfEditor):
     address = 0
 
     # The driver to use
-    driver = weewx.drivers.wxt5x0
+    driver = user.wxt5x0
 """
 
     def prompt_for_settings(self):
@@ -299,7 +299,7 @@ class WXT5x0Driver(weewx.drivers.AbstractDevice):
 
     # map sensor names to schema names
     DEFAULT_MAP = {
-        'windDir': 'wind_dir',
+        'windDir': 'wind_dir_avg',
         'windSpeed': 'wind_speed_avg',
         'windGustDir': 'wind_dir_max',
         'windGust': 'wind_speed_max',
@@ -316,14 +316,6 @@ class WXT5x0Driver(weewx.drivers.AbstractDevice):
         'referenceVoltage': 'reference_voltage',
         }
 
-        'Dm': 'wind_dir_avg',
-        'Sn': 'wind_speed_min',
-        # aR3: precipitation message
-        'Rd': 'rain_duration',
-        'Hd': 'hail_duration',
-        'Rp': 'rain_intensity_peak',
-        'Hp': 'hail_intensity_peak',
-
     def __init__(self, **stn_dict):
         loginf('driver version is %s' % DRIVER_VERSION)
         self._model = stn_dict.get('model', 'WXT520')
@@ -333,7 +325,7 @@ class WXT5x0Driver(weewx.drivers.AbstractDevice):
         self._sensor_map = dict(WXT5x0Driver.DEFAULT_MAP)
         self._address = int(stn_dict.get('address', 0))
         protocol = stn_dict.get('protocol', 'serial').lower()
-        if protocol not in ['sdi12', 'nmea', 'serial']:
+        if protocol not in WXT5x0Driver.STATION:
             raise ValueError("unknown protocol '%s'" % protocol)
         baud = WXT5x0Driver.BAUD.get(protocol, 19200)
         baud = int(stn_dict.get('baud', baud))
@@ -401,9 +393,9 @@ if __name__ == '__main__':
                       help='display driver version')
     parser.add_option('--debug', action='store_true',
                       help='display diagnostic information while running')
-    parser.add_option('--protocol', metavar='PROTOCOL',
+    parser.add_option('--protocol',
                       help='serial, nmea, or sdi12', default='serial')
-    parser.add_option('--port', metavar='PORT',
+    parser.add_option('--port',
                       help='serial port to which the station is connected',
                       default=WXT5x0Driver.DEFAULT_PORT)
     parser.add_option('--baud', type=int,
@@ -412,10 +404,20 @@ if __name__ == '__main__':
                       help='device address', default=0)
     parser.add_option('--poll-interval', metavar='POLL', type=int,
                       help='poll interval, in seconds', default=3)
+    parser.add_option('--get-wind',
+                      help='get a single wind message')
+    parser.add_option('--get-pth',
+                      help='get a pressure/temperature/humidity message')
+    parser.add_option('--get-precip',
+                      help='get a single precipitation message')
+    parser.add_option('--get-supervisor',
+                      help='get a single supervisor message')
+    parser.add_option('--get-composite',
+                      help='get a single composite message')
     (options, args) = parser.parse_args()
 
     if options.version:
-        print "wxt5x0 driver version %s" % DRIVER_VERSION
+        print "%s driver version %s" % (DRIVER_NAME, DRIVER_VERSION)
         exit(1)
 
     if options.debug:
@@ -432,9 +434,20 @@ if __name__ == '__main__':
         exit(1)
 
     s.open()
-    while True:
-        data = s.get_composite().strip()
-        print int(time.time()), data
-        parsed = Station.parse(data)
-        print parsed
-        time.sleep(options.poll_interval)
+    if options.get_wind:
+        print s.get_wind().strip()
+    elif options.get_pth:
+        print s.get_pth().strip()
+    elif options.get_precip:
+        print s.get_precipitation().strip()
+    elif options.get_supervisor:
+        print s.get_supervisor().strip()
+    elif options.get_composite:
+        print s.get_composite().strip()
+    else:
+        while True:
+            data = s.get_composite().strip()
+            print int(time.time()), data
+            parsed = Station.parse(data)
+            print parsed
+            time.sleep(options.poll_interval)
