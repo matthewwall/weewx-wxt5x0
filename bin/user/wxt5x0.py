@@ -72,7 +72,7 @@ def logerr(msg):
 
 class Station(object):
     def __init__(self, address, port, baud, use_crc=False):
-        self.use_crc = use_crc
+        self.crc_prefix = None
         self.terminator = ''
         self.address = address
         self.port = port
@@ -98,9 +98,9 @@ class Station(object):
         self.device.write(cmd)
 
     def get_data(self, cmd):
-#        if self.use_crc:
+#        if self.crc_prefix:
 #            cmd = cmd.replace('R', 'r')
-#            cmd = "%sxxx" % cmd
+#            cmd = "%sxxx" % self.crc_prefix
         self.send_cmd(cmd)
         return self.device.readline()
 
@@ -146,6 +146,23 @@ class Station(object):
 
     def get_composite(self):
         return self.get_data('R0')
+
+    @staticmethod
+    def calc_crc(txt):
+        crc = 0
+        for x in txt:
+            crc |= x
+            for cnt in range(1, 9):
+                if crc << 16 == 1:
+                    crc >>= 1
+                    crc |= 0xa001
+                else:
+                    crc >>= 1
+        a = 0x40 | (crc >> 12)
+        b = 0x40 | ((crc >> 6) & 0x3f)
+        c = 0x40 | (crc & 0x3f)
+        return a + b + c
+
 
     # wind
     # [I] update interval 1...3600 seconds
@@ -444,6 +461,8 @@ if __name__ == '__main__':
                       help='get a single supervisor message')
     parser.add_option('--get-composite',
                       help='get a single composite message')
+    parser.add_option('--test-crc', metavar='STRING',
+                      help='verify the CRC calculation')
     (options, args) = parser.parse_args()
 
     if options.version:
@@ -452,6 +471,11 @@ if __name__ == '__main__':
 
     if options.debug:
         syslog.setlogmask(syslog.LOG_UPTO(syslog.LOG_DEBUG))
+
+    if options.test_crc:
+        print "string: '%s'" % options.test_crc
+        print "crc: '%s'" % Station.calc_crc(options.test_crc)
+        exit(0)
 
     if options.protocol == 'serial':
         s = StationSerial(options.address, options.port, options.baud)
