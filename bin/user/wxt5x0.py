@@ -41,7 +41,6 @@ The supervisor message controls error messaging and heater.
 
 # FIXME: test with and without error messages
 # FIXME: test with and without crc
-# FIXME: get units right
 
 from __future__ import with_statement
 import syslog
@@ -164,7 +163,7 @@ class Station(object):
     def calc_crc(txt):
         crc = 0
         for x in txt:
-            crc |= x
+            crc |= ord(x)
             for cnt in range(1, 9):
                 if crc << 16 == 1:
                     crc >>= 1
@@ -226,8 +225,6 @@ class Station(object):
                     except ValueError, e:
                         logerr("parse failed for %s (%s):%s" % (abbr, vstr, e))
                     parsed[obs] = value
-                    if unit is not None and unit != '#':
-                        parsed["%s_unit" % obs] = unit
                 else:
                     logdbg("unknown sensor %s: %s" % (abbr, vstr))
         return parsed
@@ -277,6 +274,8 @@ class Station(object):
             elif unit == 'I':
                 if 'duration' not in obs:
                     value *= MM_PER_INCH
+            elif unit == 's':
+                pass # already seconds
             else:
                 loginf("unknown unit '%s' for %s" % (unit, obs))
         elif 'hail' in obs:
@@ -288,6 +287,8 @@ class Station(object):
             elif unit == 'I':
                 if 'duration' not in obs:
                     value *= CM2_PER_IN2
+            elif unit == 's':
+                pass # already seconds
             else:
                 loginf("unknown unit '%s' for %s" % (unit, obs))
         return value
@@ -401,9 +402,9 @@ class WXT5x0Driver(weewx.drivers.AbstractDevice):
         self._model = stn_dict.get('model', 'WXT520')
         self._max_tries = int(stn_dict.get('max_tries', 5))
         self._retry_wait = int(stn_dict.get('retry_wait', 10))
-        self._poll_interval = int(stn_dict.get('poll_interval', 0))
+        self._poll_interval = int(stn_dict.get('poll_interval', 1))
         self._sensor_map = dict(WXT5x0Driver.DEFAULT_MAP)
-        self._address = int(stn_dict.get('address', 0))
+        address = int(stn_dict.get('address', 0))
         protocol = stn_dict.get('protocol', 'serial').lower()
         if protocol not in WXT5x0Driver.STATION:
             raise ValueError("unknown protocol '%s'" % protocol)
@@ -429,9 +430,11 @@ class WXT5x0Driver(weewx.drivers.AbstractDevice):
                     data = Station.parse(raw)
                     logdbg("parsed: %s" % data)
                     packet = self._data_to_packet(data)
-                    yield packet
+                    logdbg("mapped: %s" % packet)
+                    if packet:
+                        yield packet
                     break
-                except (BadRead, BadHeader, usb.USBError), e:
+                except IOError, e:
                     logerr("Failed attempt %d of %d to read data: %s" %
                            (cnt + 1, self.max_tries, e))
                     logdbg("Waiting %d seconds" % self._retry_wait)
@@ -445,16 +448,17 @@ class WXT5x0Driver(weewx.drivers.AbstractDevice):
     def _data_to_packet(self, data):
         # if there is a mapping to a schema name, use it.  otherwise use the
         # sensor naming native to the hardware.
-        fields = self.sensor_map.values()
-        packet = {'dateTime': int(time.time() + 0.5), 'usUnits': weewx.METRICWX}
+        packet = dict()
         for name in data:
             obs = name
-            if name in fields:
-                for field in self.sensor_map:
-                    if self.sensor_map[field] == name:
-                        obs = field
-                        break
+            for field in self._sensor_map:
+                if self._sensor_map[field] == name:
+                    obs = field
+                    break
             packet[obs] = data[name]
+        if packet:
+            packet['dateTime'] = int(time.time() + 0.5)
+            packet['usUnits'] = weewx.METRICWX
         return packet
 
 
