@@ -52,6 +52,17 @@ import weewx.drivers
 DRIVER_NAME = 'WXT5x0'
 DRIVER_VERSION = '0.1'
 
+MPS_PER_KPH = 0.277778
+MPS_PER_MPH = 0.44704
+MPS_PER_KNOT = 0.514444
+MBAR_PER_PASCAL = 0.01
+MBAR_PER_BAR = 1000.0
+MBAR_PER_MMHG = 1.33322387415
+MBAR_PER_INHG = 33.8639
+MM_PER_INCH = 25.4
+CM2_PER_IN2 = 6.4516
+
+
 def loader(config_dict, _):
     return WXT5x0Driver(**config_dict[DRIVER_NAME])
 
@@ -165,49 +176,6 @@ class Station(object):
         c = 0x40 | (crc & 0x3f)
         return a + b + c
 
-    # wind
-    # [I] update interval 1...3600 seconds
-    # [A] averaging time 1...3600 seconds
-    # [U] speed M=m/s K=km/h S=mph N=knots
-    # [D] direction offset -180...180
-
-    # temperature/humidity
-    # [I] update interval 1...3600 seconds
-    # [P] pressure H=hPa P=pascal B=bar M=mmHg I=inHg
-    # [T] temperature C=celsius F=fahrenheit
-
-    # precipitation
-    # [I] update interval 1...3600 seconds
-    # [U] precip M=(mm s mm/h) I=(in s in/h)
-    # [S] hail M=(hits/cm^2 s hits/cm^2h) I=(hits/in^2 s hits/in^2h) H=hits
-
-    # '#' indicates invalid data
-
-    SPEED_UNITS = {
-        'D': 'degree',
-        'M': 'meter_per_second',
-        'K': 'km_per_hour',
-        'S': 'mile_per_hour',
-        'N': 'knot',
-        }
-
-    PRESSURE_UNITS = {
-        'H': 'hPa',
-        'P': 'pa', # FIXME
-        'B': 'bar', # FIXME
-        'M': 'mmHg',
-        'I': 'inHg',
-        }
-
-    TEMPERATURE_UNITS = {
-        'C': 'degree_C',
-        'F': 'degree_F',
-        }
-
-    HUMIDITY_UNITS = {
-        'P': 'percent',
-        }
-
     OBSERVATIONS = {
         # aR1: wind message
         'Dn': 'wind_dir_min',
@@ -246,20 +214,84 @@ class Station(object):
                 abbr, vstr = part.split('=')
                 if abbr == 'Id': # skip the information field
                     continue
-                obs = OBSERVATIONS.get(abbr)
+                obs = Station.OBSERVATIONS.get(abbr)
                 if obs:
                     value = None
+                    unit = None
                     try:
                         unit = vstr[-1]
-                        if unit != '#':
+                        if unit != '#': # '#' indicates invalid data
                             value = float(vstr[:-1])
+                            value = Station.convert(obs, value, unit)
                     except ValueError, e:
                         logerr("parse failed for %s (%s):%s" % (abbr, vstr, e))
                     parsed[obs] = value
+                    if unit is not None and unit != '#':
+                        parsed["%s_unit" % obs] = unit
                 else:
                     logdbg("unknown sensor %s: %s" % (abbr, vstr))
         return parsed
-        
+
+    @staticmethod
+    def convert(obs, value, unit):
+        # convert from the indicated units to the weewx METRICWX unit system
+        if 'temperature' in obs:
+            # [T] temperature C=celsius F=fahrenheit
+            if unit == 'C':
+                pass # already C
+            elif unit == 'F':
+                value = (value - 32.0) * 5.0 / 9.0
+            else:
+                loginf("unknown unit '%s' for %s" % (unit, obs))
+        elif 'wind_speed' in obs:
+            # [U] speed M=m/s K=km/h S=mph N=knots
+            if unit == 'M':
+                pass # already m/s
+            elif unit == 'K':
+                value *= MPS_PER_KPH
+            elif unit == 'S':
+                value *= MPS_PER_MPH
+            elif unit == 'N':
+                value *= MPS_PER_KNOT
+            else:
+                loginf("unknown unit '%s' for %s" % (unit, obs))
+        elif 'pressure' in obs:
+            # [P] pressure H=hPa P=pascal B=bar M=mmHg I=inHg
+            if unit == 'H':
+                pass # already hPa/mbar
+            elif unit == 'P':
+                value *= MBAR_PER_PASCAL
+            elif unit == 'B':
+                value *= MBAR_PER_BAR
+            elif unit == 'M':
+                value *= MBAR_PER_MMHG
+            elif unit == 'I':
+                value *= MBAR_PER_INHG
+            else:
+                loginf("unknown unit '%s' for %s" % (unit, obs))
+        elif 'rain' in obs:
+            # rain: accumulation duration intensity intensity_peak
+            # [U] precip M=(mm s mm/h) I=(in s in/h)
+            if unit == 'M':
+                pass # already mm
+            elif unit == 'I':
+                if 'duration' not in obs:
+                    value *= MM_PER_INCH
+            else:
+                loginf("unknown unit '%s' for %s" % (unit, obs))
+        elif 'hail' in obs:
+            # hail: accumulation duration intensity intensity_peak
+            # [S] hail M=(hits/cm^2 s hits/cm^2h) I=(hits/in^2 s hits/in^2h)
+            #          H=hits
+            if unit == 'M':
+                pass # already cm^2
+            elif unit == 'I':
+                if 'duration' not in obs:
+                    value *= CM2_PER_IN2
+            else:
+                loginf("unknown unit '%s' for %s" % (unit, obs))
+        return value
+
 
 class StationSerial(Station):
     # ASCII over RS232, RS485, and RS422 defaults to 19200, 8, N, 1
@@ -414,7 +446,7 @@ class WXT5x0Driver(weewx.drivers.AbstractDevice):
         # if there is a mapping to a schema name, use it.  otherwise use the
         # sensor naming native to the hardware.
         fields = self.sensor_map.values()
-        packet = {'dateTime': int(time.time() + 0.5), 'usUnits': weewx.METRIC}
+        packet = {'dateTime': int(time.time() + 0.5), 'usUnits': weewx.METRICWX}
         for name in data:
             obs = name
             if name in fields:
@@ -479,30 +511,30 @@ if __name__ == '__main__':
         exit(0)
 
     if options.protocol == 'serial':
-        s = StationSerial(options.address, options.port, options.baud)
+        cls = StationSerial
     elif options.protocol == 'nmea':
-        s = StationNMEA(options.address, options.port, options.baud)
+        cls = StationNMEA
     elif options.protocol == 'sdi12':
-        s = StationSDI12(options.address, options.port, options.baud)
+        cls = StationSDI12
     else:
         print "unknown protocol '%s'" % options.protocol
         exit(1)
 
-    s.open()
-    if options.get_wind:
-        print s.get_wind().strip()
-    elif options.get_pth:
-        print s.get_pth().strip()
-    elif options.get_precip:
-        print s.get_precipitation().strip()
-    elif options.get_supervisor:
-        print s.get_supervisor().strip()
-    elif options.get_composite:
-        print s.get_composite().strip()
-    else:
-        while True:
-            data = s.get_composite().strip()
-            print int(time.time()), data
-            parsed = Station.parse(data)
-            print parsed
-            time.sleep(options.poll_interval)
+    with cls(options.address, options.port, options.baud) as s:
+        if options.get_wind:
+            print s.get_wind().strip()
+        elif options.get_pth:
+            print s.get_pth().strip()
+        elif options.get_precip:
+            print s.get_precipitation().strip()
+        elif options.get_supervisor:
+            print s.get_supervisor().strip()
+        elif options.get_composite:
+            print s.get_composite().strip()
+        else:
+            while True:
+                data = s.get_composite().strip()
+                print int(time.time()), data
+                parsed = Station.parse(data)
+                print parsed
+                time.sleep(options.poll_interval)
