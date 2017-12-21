@@ -1,6 +1,6 @@
 weewx-wxt5x0
 
-This is a driver for weewx that collects data from WXT5x0 hardware.
+This is a driver for weewx that collects data from Vaisala WXT5x0 hardware.
 
 Installation
 
