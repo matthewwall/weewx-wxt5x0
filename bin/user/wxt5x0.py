@@ -360,7 +360,9 @@ class WXT5x0ConfigurationEditor(weewx.drivers.AbstractConfEditor):
 """
 
     def prompt_for_settings(self):
-        print "Specify the protocol"
+        print "Specify the model"
+        model = self._prompt('model', 'WXT520')
+        print "Specify the protocol (serial, nmea, or sdi12)"
         protocol = self._prompt('protocol', 'serial', ['serial', 'nmea', 'sdi12'])
         print "Specify the serial port on which the station is connected, for"
         print "example /dev/ttyUSB0 or /dev/ttyS0."
