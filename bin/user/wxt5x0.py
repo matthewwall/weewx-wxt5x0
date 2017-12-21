@@ -49,7 +49,7 @@ import time
 import weewx.drivers
 
 DRIVER_NAME = 'WXT5x0'
-DRIVER_VERSION = '0.1'
+DRIVER_VERSION = '0.2'
 
 MPS_PER_KPH = 0.277778
 MPS_PER_MPH = 0.44704
@@ -95,7 +95,7 @@ class Station(object):
     def open(self):
         pass
 
-    def shutdown(self):
+    def close(self):
         pass
 
     def __enter__(self):
@@ -417,7 +417,7 @@ class WXT5x0Driver(weewx.drivers.AbstractDevice):
         self._station.open()
 
     def closePort(self):
-        self._station.shutdown()
+        self._station.close()
 
     @property
     def hardware_name(self):
@@ -438,7 +438,7 @@ class WXT5x0Driver(weewx.drivers.AbstractDevice):
                     break
                 except IOError, e:
                     logerr("Failed attempt %d of %d to read data: %s" %
-                           (cnt + 1, self.max_tries, e))
+                           (cnt + 1, self._max_tries, e))
                     logdbg("Waiting %d seconds" % self._retry_wait)
                     time.sleep(self._retry_wait)
             else:
@@ -467,7 +467,7 @@ class WXT5x0Driver(weewx.drivers.AbstractDevice):
 # define a main entry point for basic testing of the station without weewx
 # engine and service overhead.  invoke this as follows from the weewx root dir:
 #
-# PYTHONPATH=bin python bin/weewx/drivers/wxt5x0.py
+# PYTHONPATH=bin python bin/user/wxt5x0.py
 
 if __name__ == '__main__':
     import optparse

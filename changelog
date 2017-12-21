@@ -1,2 +1,6 @@
+0.2 21dec2017
+* fixed bug in retry_wait
+* clean up open/close semantics
+
 0.1 20dec2017
 * initial release
