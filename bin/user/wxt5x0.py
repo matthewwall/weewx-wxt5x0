@@ -126,7 +126,7 @@ class Station(object):
 #            cmd = cmd.replace('R', 'r')
 #            cmd = "%sxxx" % self.crc_prefix
         self.send_cmd(cmd)
-        line self.device.readline()
+        line = self.device.readline()
         line.replace('\x00', '') # eliminate any NULL characters
         return line
 
