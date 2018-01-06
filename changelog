@@ -1,3 +1,7 @@
+0.3 06jan2018
+* eliminate NULL characters from raw returns
+* calculate rain properly
+
 0.2 21dec2017
 * fixed bug in retry_wait
 * clean up open/close semantics
