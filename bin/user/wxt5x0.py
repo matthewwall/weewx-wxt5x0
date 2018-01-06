@@ -15,7 +15,9 @@ The WXT520 is available with the following serial communications:
 
 This driver supports only ASCII communications protocol.
 
-The precipitation sensor measures both rain and hail.
+The precipitation sensor measures both rain and hail.  Rain is measured as a
+length, e.g., mm or inch (so the area is implied).  Hail is measured as hits
+per area, e.g., hits per square cm or hits per square inch.
 
 The precipitation sensor has three modes: precipitation on/off, tipping bucket,
 and time based.  In precipitation on/off, the transmitter ends a precipitation
@@ -42,6 +44,16 @@ The supervisor message controls error messaging and heater.
 # FIXME: test with and without error messages
 # FIXME: test with and without crc
 
+# FIXME: need to fix units of introduced observations:
+#  rain_total
+#  rain_duration
+#  rain_intensity_peak
+#  hail_duration
+#  hail_intensity_peak
+# these do not get converted, so LOOP and REC contain mixed units!
+# also, REC does not know that rain_total is cumulative, not delta
+# note that 'hail' (hits/area) is not cumulative like 'rain_total' (length)
+
 from __future__ import with_statement
 import syslog
 import time
@@ -49,7 +61,7 @@ import time
 import weewx.drivers
 
 DRIVER_NAME = 'WXT5x0'
-DRIVER_VERSION = '0.2'
+DRIVER_VERSION = '0.3'
 
 MPS_PER_KPH = 0.277778
 MPS_PER_MPH = 0.44704
@@ -391,7 +403,7 @@ class WXT5x0Driver(weewx.drivers.AbstractDevice):
         'pressure': 'pressure',
         'rain_total': 'rain',
         'rainRate': 'rain_intensity',
-        'hail_total': 'hail',
+        'hail': 'hail',
         'hailRate': 'hail_intensity',
         'heatingTemp': 'heating_temperature',
         'heatingVoltage': 'heating_voltage',
@@ -413,6 +425,7 @@ class WXT5x0Driver(weewx.drivers.AbstractDevice):
         baud = WXT5x0Driver.STATION[protocol].DEFAULT_BAUD
         baud = int(stn_dict.get('baud', baud))
         port = stn_dict.get('port', WXT5x0Driver.DEFAULT_PORT)
+        self.last_rain_total = None
         self._station = WXT5x0Driver.STATION.get(protocol)(address, port, baud)
         self._station.open()
 
@@ -461,7 +474,22 @@ class WXT5x0Driver(weewx.drivers.AbstractDevice):
         if packet:
             packet['dateTime'] = int(time.time() + 0.5)
             packet['usUnits'] = weewx.METRICWX
+        if 'rain_total' in packet:
+            packet['rain'] = self._delta_rain(
+                packet['rain_total'], self.last_rain_total)
+            self.last_rain_total = packet['rain_total']
         return packet
+
+    @staticmethod
+    def _delta_rain(rain, last_rain):
+        if last_rain is None:
+            loginf("skipping rain measurement of %s: no last rain" % rain)
+            return None
+        if rain < last_rain:
+            loginf("rain counter wraparound detected: new=%s last=%s" %
+                   (rain, last_rain))
+            return rain
+        return rain - last_rain
 
 
 # define a main entry point for basic testing of the station without weewx
