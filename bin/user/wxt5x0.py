@@ -94,6 +94,10 @@ def logerr(msg):
     logmsg(syslog.LOG_ERR, msg)
 
 
+def _fmt(x):
+    return ' '.join(["%0.2X" % ord(c) for c in x])
+
+
 class Station(object):
     def __init__(self, address, port, baud, use_crc=False):
         self.crc_prefix = None
@@ -127,7 +131,8 @@ class Station(object):
 #            cmd = "%sxxx" % self.crc_prefix
         self.send_cmd(cmd)
         line = self.device.readline()
-        line.replace('\x00', '') # eliminate any NULL characters
+        if line:
+            line.replace('\x00', '') # eliminate any NULL characters
         return line
 
     def get_address(self):
@@ -443,7 +448,7 @@ class WXT5x0Driver(weewx.drivers.AbstractDevice):
             for cnt in range(self._max_tries):
                 try:
                     raw = self._station.get_composite()
-                    logdbg("raw: %s" % raw)
+                    logdbg("raw: %s" % _fmt(raw))
                     data = Station.parse(raw)
                     logdbg("parsed: %s" % data)
                     packet = self._data_to_packet(data)

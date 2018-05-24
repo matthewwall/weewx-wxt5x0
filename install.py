@@ -9,7 +9,7 @@ def loader():
 class WXT5x0Installer(ExtensionInstaller):
     def __init__(self):
         super(WXT5x0Installer, self).__init__(
-            version="0.3",
+            version="0.4",
             name='wxt5x0',
             description='Collect data from WXT5x0 hardware',
             author="Matthew Wall",

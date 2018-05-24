@@ -1,3 +1,6 @@
+0.4 24may2018
+* escape raw bytes when logging
+
 0.3 06jan2018
 * eliminate NULL characters from raw returns
 * calculate rain properly
