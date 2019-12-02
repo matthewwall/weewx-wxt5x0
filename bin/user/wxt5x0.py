@@ -55,13 +55,44 @@ The supervisor message controls error messaging and heater.
 # note that 'hail' (hits/area) is not cumulative like 'rain_total' (length)
 
 from __future__ import with_statement
-import syslog
 import time
 
 import weewx.drivers
 
+try:
+    # New-style weewx logging
+    import weeutil.logger
+    import logging
+    log = logging.getLogger(__name__)
+
+    def logdbg(msg):
+        log.debug(msg)
+
+    def loginf(msg):
+        log.info(msg)
+
+    def logerr(msg):
+        log.error(msg)
+
+except ImportError:
+    # Old-style weewx logging
+    import syslog
+
+    def logmsg(level, msg):
+        syslog.syslog(level, 'sdr: %s: %s' %
+                      (threading.currentThread().getName(), msg))
+
+    def logdbg(msg):
+        logmsg(syslog.LOG_DEBUG, msg)
+
+    def loginf(msg):
+        logmsg(syslog.LOG_INFO, msg)
+
+    def logerr(msg):
+        logmsg(syslog.LOG_ERR, msg)
+
 DRIVER_NAME = 'WXT5x0'
-DRIVER_VERSION = '0.3'
+DRIVER_VERSION = '0.5'
 
 MPS_PER_KPH = 0.277778
 MPS_PER_MPH = 0.44704
@@ -95,6 +126,13 @@ def logerr(msg):
 
 
 def _fmt(x):
+    """
+    This will format raw bytes into a string of space-delimited hex.  You can
+    convert this back to the raw string like this at a python prompt:
+
+    x = "XX XX XX ..."
+    ''.join([chr(int(y,16)) for y in x.split(' ')])
+    """
     return ' '.join(["%0.2X" % ord(c) for c in x])
 
 
@@ -226,9 +264,17 @@ class Station(object):
     @staticmethod
     def parse(raw):
         # 0R0,Dn=000#,Dm=106#,Dx=182#,Sn=1.1#,Sm=4.0#,Sx=6.6#,Ta=16.0C,Ua=50.0P,Pa=1018.1H,Rc=0.00M,Rd=0s,Ri=0.0M,Hc=0.0M,Hd=0s,Hi=0.0M,Rp=0.0M,Hp=0.0M,Th=15.6C,Vh=0.0N,Vs=15.2V,Vr=3.498V,Id=Ant
+        # 0R0,Dm=051D,Sm=0.1M,Ta=27.9C,Ua=39.4P,Pa=1003.2H,Rc=0.00M,Th=28.1C,Vh=0.0N
+        # here is an unexpected result: no value for Dn!
+        # 0R1,Dn=0m=032D,Sm=0.1M,Ta=27.9C,Ua=39.4P,Pa=1003.2H,Rc=0.00M,Th=28.3C,Vh=0.0N
+
         parsed = dict()
         for part in raw.strip().split(','):
-            if '=' in part:
+            cnt = part.count('=')
+            if cnt == 0:
+                # skip the leading identifier 0R0/0R1
+                continue
+            elif cnt == 1:
                 abbr, vstr = part.split('=')
                 if abbr == 'Id': # skip the information field
                     continue
@@ -241,11 +287,13 @@ class Station(object):
                         if unit != '#': # '#' indicates invalid data
                             value = float(vstr[:-1])
                             value = Station.convert(obs, value, unit)
-                    except ValueError, e:
+                    except ValueError as e:
                         logerr("parse failed for %s (%s):%s" % (abbr, vstr, e))
                     parsed[obs] = value
                 else:
                     logdbg("unknown sensor %s: %s" % (abbr, vstr))
+            else:
+                logdbg("skip observation: '%s'" % part)
         return parsed
 
     @staticmethod
@@ -379,14 +427,14 @@ class WXT5x0ConfigurationEditor(weewx.drivers.AbstractConfEditor):
 """
 
     def prompt_for_settings(self):
-        print "Specify the model"
+        print("Specify the model")
         model = self._prompt('model', 'WXT520')
-        print "Specify the protocol (serial, nmea, or sdi12)"
+        print("Specify the protocol (serial, nmea, or sdi12)")
         protocol = self._prompt('protocol', 'serial', ['serial', 'nmea', 'sdi12'])
-        print "Specify the serial port on which the station is connected, for"
-        print "example /dev/ttyUSB0 or /dev/ttyS0."
+        print("Specify the serial port on which the station is connected, for")
+        print("example /dev/ttyUSB0 or /dev/ttyS0.")
         port = self._prompt('port', '/dev/ttyUSB0')
-        print "Specify the device address"
+        print("Specify the device address")
         address = self._prompt('address', 0)
         return {'protocol': protocol, 'port': port, 'address': address}
 
@@ -456,7 +504,7 @@ class WXT5x0Driver(weewx.drivers.AbstractDevice):
                     if packet:
                         yield packet
                     break
-                except IOError, e:
+                except IOError as e:
                     logerr("Failed attempt %d of %d to read data: %s" %
                            (cnt + 1, self._max_tries, e))
                     logdbg("Waiting %d seconds" % self._retry_wait)
@@ -506,6 +554,7 @@ class WXT5x0Driver(weewx.drivers.AbstractDevice):
 
 if __name__ == '__main__':
     import optparse
+    import syslog
     usage = """%prog [options] [--debug] [--help]"""
     syslog.openlog('wxt5x0', syslog.LOG_PID | syslog.LOG_CONS)
     syslog.setlogmask(syslog.LOG_UPTO(syslog.LOG_INFO))
@@ -540,15 +589,15 @@ if __name__ == '__main__':
     (options, args) = parser.parse_args()
 
     if options.version:
-        print "%s driver version %s" % (DRIVER_NAME, DRIVER_VERSION)
+        print("%s driver version %s" % (DRIVER_NAME, DRIVER_VERSION))
         exit(1)
 
     if options.debug:
         syslog.setlogmask(syslog.LOG_UPTO(syslog.LOG_DEBUG))
 
     if options.test_crc:
-        print "string: '%s'" % options.test_crc
-        print "crc: '%s'" % Station.calc_crc(options.test_crc)
+        print("string: '%s'" % options.test_crc)
+        print("crc: '%s'" % Station.calc_crc(options.test_crc))
         exit(0)
 
     if options.protocol == 'serial':
@@ -558,24 +607,24 @@ if __name__ == '__main__':
     elif options.protocol == 'sdi12':
         cls = StationSDI12
     else:
-        print "unknown protocol '%s'" % options.protocol
+        print("unknown protocol '%s'" % options.protocol)
         exit(1)
 
     with cls(options.address, options.port, options.baud) as s:
         if options.get_wind:
-            print s.get_wind().strip()
+            print("%s" % s.get_wind().strip())
         elif options.get_pth:
-            print s.get_pth().strip()
+            print("%s" % s.get_pth().strip())
         elif options.get_precip:
-            print s.get_precipitation().strip()
+            print("%s" % s.get_precipitation().strip())
         elif options.get_supervisor:
-            print s.get_supervisor().strip()
+            print("%s" % s.get_supervisor().strip())
         elif options.get_composite:
-            print s.get_composite().strip()
+            print("%s" % s.get_composite().strip())
         else:
             while True:
                 data = s.get_composite().strip()
-                print int(time.time()), data
+                print("%s %s" % (int(time.time()), data))
                 parsed = Station.parse(data)
-                print parsed
+                print("%s" % parsed)
                 time.sleep(options.poll_interval)
