@@ -79,8 +79,7 @@ except ImportError:
     import syslog
 
     def logmsg(level, msg):
-        syslog.syslog(level, 'sdr: %s: %s' %
-                      (threading.currentThread().getName(), msg))
+        syslog.syslog(level, 'wxt5x0: %s' % msg)
 
     def logdbg(msg):
         logmsg(syslog.LOG_DEBUG, msg)
@@ -92,7 +91,7 @@ except ImportError:
         logmsg(syslog.LOG_ERR, msg)
 
 DRIVER_NAME = 'WXT5x0'
-DRIVER_VERSION = '0.5'
+DRIVER_VERSION = '0.6'
 
 MPS_PER_KPH = 0.277778
 MPS_PER_MPH = 0.44704
@@ -112,34 +111,20 @@ def confeditor_loader():
     return WXT5x0ConfigurationEditor()
 
 
-def logmsg(level, msg):
-    syslog.syslog(level, 'wxt5x0: %s' % msg)
-
-def logdbg(msg):
-    logmsg(syslog.LOG_DEBUG, msg)
-
-def loginf(msg):
-    logmsg(syslog.LOG_INFO, msg)
-
-def logerr(msg):
-    logmsg(syslog.LOG_ERR, msg)
-
-
-def _fmt(x):
-    """
-    This will format raw bytes into a string of space-delimited hex.  You can
-    convert this back to the raw string like this at a python prompt:
-
-    x = "XX XX XX ..."
-    ''.join([chr(int(y,16)) for y in x.split(' ')])
-    """
-    return ' '.join(["%0.2X" % ord(c) for c in x])
+def _fmt(byte_str):
+    """ This will format raw bytes into a string of space-delimited hex. """
+    try:
+        # Python 2
+        return ' '.join(["%0.2X" % ord(c) for c in byte_str])
+    except TypeError:
+        # Python 3
+        return ' '.join(["%.2X" % c for c in byte_str])
 
 
 class Station(object):
     def __init__(self, address, port, baud, use_crc=False):
         self.crc_prefix = None
-        self.terminator = ''
+        self.terminator = b''
         self.address = address
         self.port = port
         self.baudrate = baud
@@ -160,7 +145,7 @@ class Station(object):
         self.close()
 
     def send_cmd(self, cmd):
-        cmd = "%d%s%s" % (self.address, cmd, self.terminator)
+        cmd = b"%d%s%s" % (self.address, cmd, self.terminator)
         self.device.write(cmd)
 
     def get_data(self, cmd):
@@ -170,57 +155,65 @@ class Station(object):
         self.send_cmd(cmd)
         line = self.device.readline()
         if line:
-            line.replace('\x00', '') # eliminate any NULL characters
+            line.replace(b'\x00', b'') # eliminate any NULL characters
         return line
 
     def get_address(self):
-        self.device.write('?%s' % self.terminator)
+        self.device.write(b'?%s' % self.terminator)
         return self.device.readline()
 
     def set_address(self, addr):
-        self.send_cmd('A%d' % addr)
+        self.send_cmd(b'A%d' % addr)
 
     def get_ack(self):
-        return self.get_data('')
+        return self.get_data(b'')
 
     def reset(self):
-        self.send_cmd('XZ')
+        self.send_cmd(b'XZ')
 
     def precip_counter_reset(self):
-        self.send_cmd('XZRU')
+        self.send_cmd(b'XZRU')
 
     def precip_intensity_reset(self):
-        self.send_cmd('XZRI')
+        self.send_cmd(b'XZRI')
 
     def measurement_reset(self):
-        self.send_cmd('XZM')
+        self.send_cmd(b'XZM')
 
     def set_automatic_mode(self):
-        self.send_cmd('XU,M=R')
+        self.send_cmd(b'XU,M=R')
 
     def set_polled_mode(self):
-        self.send_cmd('XU,M=P')
+        self.send_cmd(b'XU,M=P')
 
     def get_wind(self):
-        return self.get_data('R1')
+        return self.get_data(b'R1')
 
     def get_pth(self):
-        return self.get_data('R2')
+        return self.get_data(b'R2')
 
     def get_precip(self):
-        return self.get_data('R3')
+        return self.get_data(b'R3')
 
     def get_supervisor(self):
-        return self.get_data('R5')
+        return self.get_data(b'R5')
 
     def get_composite(self):
-        return self.get_data('R0')
+        return self.get_data(b'R0')
 
     @staticmethod
     def calc_crc(txt):
+        # We need something that returns integers when iterated over.
+        try:
+            # Python 2
+            byte_iter = [ord(x) for x in txt]
+        except TypeError:
+            # Python 3
+            byte_iter = txt
+
         crc = 0
-        for x in txt:
-            crc |= ord(x)
+        for x in byte_iter:
+            crc |= x
             for cnt in range(1, 9):
                 if crc << 16 == 1:
                     crc >>= 1
@@ -234,31 +227,31 @@ class Station(object):
 
     OBSERVATIONS = {
         # aR1: wind message
-        'Dn': 'wind_dir_min',
-        'Dm': 'wind_dir_avg',
-        'Dx': 'wind_dir_max',
-        'Sn': 'wind_speed_min',
-        'Sm': 'wind_speed_avg',
-        'Sx': 'wind_speed_max',
+        b'Dn': 'wind_dir_min',
+        b'Dm': 'wind_dir_avg',
+        b'Dx': 'wind_dir_max',
+        b'Sn': 'wind_speed_min',
+        b'Sm': 'wind_speed_avg',
+        b'Sx': 'wind_speed_max',
         # aR2: pressure, temperature, humidity message
-        'Ta': 'temperature',
-        'Ua': 'humidity',
-        'Pa': 'pressure',
+        b'Ta': 'temperature',
+        b'Ua': 'humidity',
+        b'Pa': 'pressure',
         # aR3: precipitation message
-        'Rc': 'rain',
-        'Rd': 'rain_duration',
-        'Ri': 'rain_intensity',
-        'Hc': 'hail',
-        'Hd': 'hail_duration',
-        'Hi': 'hail_intensity',
-        'Rp': 'rain_intensity_peak',
-        'Hp': 'hail_intensity_peak',
+        b'Rc': 'rain',
+        b'Rd': 'rain_duration',
+        b'Ri': 'rain_intensity',
+        b'Hc': 'hail',
+        b'Hd': 'hail_duration',
+        b'Hi': 'hail_intensity',
+        b'Rp': 'rain_intensity_peak',
+        b'Hp': 'hail_intensity_peak',
         # dR5: supervisor message
-        'Th': 'heating_temperature',
-        'Vh': 'heating_voltage',
-        'Vs': 'supply_voltage',
-        'Vr': 'reference_voltage',
-        'Id': 'information',
+        b'Th': 'heating_temperature',
+        b'Vh': 'heating_voltage',
+        b'Vs': 'supply_voltage',
+        b'Vr': 'reference_voltage',
+        b'Id': 'information',
         }
 
     @staticmethod
@@ -269,22 +262,23 @@ class Station(object):
         # 0R1,Dn=0m=032D,Sm=0.1M,Ta=27.9C,Ua=39.4P,Pa=1003.2H,Rc=0.00M,Th=28.3C,Vh=0.0N
 
         parsed = dict()
-        for part in raw.strip().split(','):
-            cnt = part.count('=')
+        for part in raw.strip().split(b','):
+            cnt = part.count(b'=')
             if cnt == 0:
                 # skip the leading identifier 0R0/0R1
                 continue
             elif cnt == 1:
-                abbr, vstr = part.split('=')
-                if abbr == 'Id': # skip the information field
+                abbr, vstr = part.split(b'=')
+                if abbr == b'Id': # skip the information field
                     continue
                 obs = Station.OBSERVATIONS.get(abbr)
                 if obs:
                     value = None
                     unit = None
                     try:
-                        unit = vstr[-1]
-                        if unit != '#': # '#' indicates invalid data
+                        # Get the last character as a byte-string
+                        unit = vstr[-1:]
+                        if unit != b'#': # '#' indicates invalid data
                             value = float(vstr[:-1])
                             value = Station.convert(obs, value, unit)
                     except ValueError as e:
@@ -298,50 +292,55 @@ class Station(object):
 
     @staticmethod
     def convert(obs, value, unit):
+        """Convert units
+        obs: a string, such as 'heating_temperature'
+        value: float
+        unit: a one character long byte-string
+        """
         # convert from the indicated units to the weewx METRICWX unit system
         if 'temperature' in obs:
             # [T] temperature C=celsius F=fahrenheit
-            if unit == 'C':
+            if unit == b'C':
                 pass # already C
-            elif unit == 'F':
+            elif unit == b'F':
                 value = (value - 32.0) * 5.0 / 9.0
             else:
                 loginf("unknown unit '%s' for %s" % (unit, obs))
         elif 'wind_speed' in obs:
             # [U] speed M=m/s K=km/h S=mph N=knots
-            if unit == 'M':
+            if unit == b'M':
                 pass # already m/s
-            elif unit == 'K':
+            elif unit == b'K':
                 value *= MPS_PER_KPH
-            elif unit == 'S':
+            elif unit == b'S':
                 value *= MPS_PER_MPH
-            elif unit == 'N':
+            elif unit == b'N':
                 value *= MPS_PER_KNOT
             else:
                 loginf("unknown unit '%s' for %s" % (unit, obs))
         elif 'pressure' in obs:
             # [P] pressure H=hPa P=pascal B=bar M=mmHg I=inHg
-            if unit == 'H':
+            if unit == b'H':
                 pass # already hPa/mbar
-            elif unit == 'P':
+            elif unit == b'P':
                 value *= MBAR_PER_PASCAL
-            elif unit == 'B':
+            elif unit == b'B':
                 value *= MBAR_PER_BAR
-            elif unit == 'M':
+            elif unit == b'M':
                 value *= MBAR_PER_MMHG
-            elif unit == 'I':
+            elif unit == b'I':
                 value *= MBAR_PER_INHG
             else:
                 loginf("unknown unit '%s' for %s" % (unit, obs))
         elif 'rain' in obs:
             # rain: accumulation duration intensity intensity_peak
             # [U] precip M=(mm s mm/h) I=(in s in/h)
-            if unit == 'M':
+            if unit == b'M':
                 pass # already mm
-            elif unit == 'I':
+            elif unit == b'I':
                 if 'duration' not in obs:
                     value *= MM_PER_INCH
-            elif unit == 's':
+            elif unit == b's':
                 pass # already seconds
             else:
                 loginf("unknown unit '%s' for %s" % (unit, obs))
@@ -349,12 +348,12 @@ class Station(object):
             # hail: accumulation duration intensity intensity_peak
             # [S] hail M=(hits/cm^2 s hits/cm^2h) I=(hits/in^2 s hits/in^2h)
             #          H=hits
-            if unit == 'M':
+            if unit == b'M':
                 pass # already cm^2
-            elif unit == 'I':
+            elif unit == b'I':
                 if 'duration' not in obs:
                     value *= CM2_PER_IN2
-            elif unit == 's':
+            elif unit == b's':
                 pass # already seconds
             else:
                 loginf("unknown unit '%s' for %s" % (unit, obs))
@@ -367,7 +366,7 @@ class StationSerial(Station):
 
     def __init__(self, address, port, baud=DEFAULT_BAUD):
         super(StationSerial, self).__init__(address, port, baud)
-        self.terminator = '\r\n'
+        self.terminator = b'\r\n'
         self.device = None
 
     def open(self):
@@ -389,7 +388,7 @@ class StationNMEA(Station):
 
     def __init__(self, address, port, baud=DEFAULT_BAUD):
         super(StationNMEA, self).__init__(address, port, baud)
-        self.terminator = '\r\n'
+        self.terminator = b'\r\n'
         raise NotImplementedError("NMEA support not implemented")
 
 
@@ -399,7 +398,7 @@ class StationSDI12(Station):
 
     def __init__(self, address, port, baud=DEFAULT_BAUD):
         super(StationSDI12, self).__init__(address, port, baud)
-        self.terminator = '!'
+        self.terminator = b'!'
         raise NotImplementedError("SDI12 support not implemented")
 
 

@@ -1,3 +1,6 @@
+0.6 12oct2020
+* Finished port to Python 3. -tk
+
 0.5 02dec2019
 * support python3
 * deal with corrupt wind readings issue #4
