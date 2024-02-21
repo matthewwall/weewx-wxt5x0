@@ -1,3 +1,6 @@
+0.7 21feb2024
+* fixed rain calculation when rain_total is None
+
 0.6 12oct2020
 * Finished port to Python 3. -tk
 

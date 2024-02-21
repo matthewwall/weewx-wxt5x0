@@ -1,5 +1,6 @@
 # installer for wxt5x0 driver
-# Copyright 2017 Matthew Wall
+# Copyright 2017-2024 Matthew Wall
+# Distributed under terms of the GPLv3
 
 from weecfg.extension import ExtensionInstaller
 
@@ -9,7 +10,7 @@ def loader():
 class WXT5x0Installer(ExtensionInstaller):
     def __init__(self):
         super(WXT5x0Installer, self).__init__(
-            version="0.6",
+            version="0.7",
             name='wxt5x0',
             description='Collect data from WXT5x0 hardware',
             author="Matthew Wall",

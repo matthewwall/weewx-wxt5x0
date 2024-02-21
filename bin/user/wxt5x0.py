@@ -1,5 +1,6 @@
 #!/usr/bin/env python
-# Copyright 2017 Matthew Wall, all rights reserved
+# Copyright 2017-2024 Matthew Wall, all rights reserved
+# Distributed under terms of the GPLv3
 """
 Collect data from Vaisala WXT510 or WXT520 station.
 
@@ -60,38 +61,30 @@ import time
 import weewx.drivers
 
 try:
-    # New-style weewx logging
+    # weeWX v4+ logging
     import weeutil.logger
     import logging
     log = logging.getLogger(__name__)
-
     def logdbg(msg):
         log.debug(msg)
-
     def loginf(msg):
         log.info(msg)
-
     def logerr(msg):
         log.error(msg)
-
 except ImportError:
-    # Old-style weewx logging
+    # weeWX v3 logging
     import syslog
-
     def logmsg(level, msg):
         syslog.syslog(level, 'wxt5x0: %s' % msg)
-
     def logdbg(msg):
         logmsg(syslog.LOG_DEBUG, msg)
-
     def loginf(msg):
         logmsg(syslog.LOG_INFO, msg)
-
     def logerr(msg):
         logmsg(syslog.LOG_ERR, msg)
 
 DRIVER_NAME = 'WXT5x0'
-DRIVER_VERSION = '0.6'
+DRIVER_VERSION = '0.7'
 
 MPS_PER_KPH = 0.277778
 MPS_PER_MPH = 0.44704
@@ -536,11 +529,12 @@ class WXT5x0Driver(weewx.drivers.AbstractDevice):
 
     @staticmethod
     def _delta_rain(rain, last_rain):
-        if last_rain is None:
-            loginf("skipping rain measurement of %s: no last rain" % rain)
+        if rain is None or last_rain is None:
+            loginf("skipping rain measurement: rain=%s last_rain=%s" %
+                   (rain, last_rain))
             return None
         if rain < last_rain:
-            loginf("rain counter wraparound detected: new=%s last=%s" %
+            loginf("rain counter wraparound detected: rain=%s last_rain=%s" %
                    (rain, last_rain))
             return rain
         return rain - last_rain
